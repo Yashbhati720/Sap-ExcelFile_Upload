@@ -1,1 +1,154 @@
-*&---------------------------------------------------------------------* *& Report ZEXCEL_FILEHANDLING *&---------------------------------------------------------------------* REPORT zexcel_filehandling.  TYPES: BEGIN OF ty_data,          bank_id   TYPE zbank_id,          cust_id   TYPE zcust_id,          bank_name TYPE zbank_name,          bank_city TYPE zbank_city,          country   TYPE zcountry,          amount11  TYPE zamount11,          kunnr     TYPE kunnr,        END OF ty_data.  DATA: lt_data TYPE TABLE OF ty_data,       ls_data TYPE ty_data.  DATA: lt_bank TYPE TABLE OF zbank1,       ls_bank TYPE zbank1.  DATA: lv_file TYPE string.  PARAMETERS: p_file TYPE localfile.  AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.   CALL FUNCTION 'F4_FILENAME'     EXPORTING       program_name  = syst-cprog       dynpro_number = syst-dynnr       field_name    = 'P_FILE'     IMPORTING       file_name     = p_file.  START-OF-SELECTION.    lv_file = p_file.    "--------------------------------------------------------------   " Step 1: Upload raw XLSX as binary, convert to XSTRING   "--------------------------------------------------------------   DATA: lv_xdata   TYPE xstring,         lv_filelen TYPE i,         lt_raw     TYPE STANDARD TABLE OF solix.    CALL FUNCTION 'GUI_UPLOAD'     EXPORTING       filename   = lv_file       filetype   = 'BIN'     IMPORTING       filelength = lv_filelen     TABLES       data_tab   = lt_raw.    IF sy-subrc <> 0.     MESSAGE |Binary upload failed. sy-subrc = { sy-subrc }| TYPE 'E'.     RETURN.   ENDIF.    CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'     EXPORTING       input_length = lv_filelen     IMPORTING       buffer       = lv_xdata     TABLES       binary_tab   = lt_raw.    "--------------------------------------------------------------   " Step 2: Parse XLSX using CL_FDT_XL_SPREADSHEET   "--------------------------------------------------------------   DATA: lo_excel    TYPE REF TO cl_fdt_xl_spreadsheet,         lt_sheets   TYPE if_fdt_doc_spreadsheet=>t_worksheet_names,         lv_sheet    TYPE string,         lo_data_ref TYPE REF TO data,         lo_ex       TYPE REF TO cx_fdt.    FIELD-SYMBOLS: <lt_dyn_tab> TYPE STANDARD TABLE,                  <ls_dyn_row> TYPE any,                  <lv_cell>    TYPE any.    TRY.       lo_excel = NEW cl_fdt_xl_spreadsheet(                        document_name = lv_file                        xdocument     = lv_xdata ).        lo_excel->if_fdt_doc_spreadsheet~get_worksheet_names(         IMPORTING           worksheet_names = lt_sheets ).        IF lt_sheets IS INITIAL.         MESSAGE 'No worksheets found in file' TYPE 'E'.         RETURN.       ENDIF.        READ TABLE lt_sheets INTO lv_sheet INDEX 1.   " first sheet        lo_data_ref = lo_excel->if_fdt_doc_spreadsheet~get_itab_from_worksheet( lv_sheet ).       ASSIGN lo_data_ref->* TO <lt_dyn_tab>.      CATCH cx_fdt INTO lo_ex.       MESSAGE lo_ex->get_text( ) TYPE 'E'.       RETURN.   ENDTRY.    IF <lt_dyn_tab> IS NOT ASSIGNED.     MESSAGE 'Could not read worksheet data' TYPE 'E'.     RETURN.   ENDIF.    "--------------------------------------------------------------   " Step 3: Map dynamic rows -> your typed structure (by column position)   " Row 1 is normally the header row from Excel - skipped below   "--------------------------------------------------------------   DATA: lv_idx TYPE i.      "--------------------------------------------------------------   " Step 4: Existing DB logic - unchanged   "--------------------------------------------------------------   IF lt_data IS NOT INITIAL.     SELECT * FROM zbank1       INTO TABLE lt_bank       FOR ALL ENTRIES IN lt_data       WHERE zbank_id = lt_data-bank_id         AND zcust_id = lt_data-cust_id.   ENDIF.    LOOP AT lt_data INTO ls_data.     READ TABLE lt_bank INTO ls_bank          WITH KEY zbank_id = ls_data-bank_id                   zcust_id = ls_data-cust_id.      IF sy-subrc <> 0.       CLEAR ls_bank.       ls_bank-zbank_id   = ls_data-bank_id.       ls_bank-zcust_id   = ls_data-cust_id.       ls_bank-zbank_name = ls_data-bank_name.       ls_bank-zbank_city = ls_data-bank_city.       ls_bank-zcountry   = ls_data-country.       ls_bank-zamount11    = ls_data-amount11.       ls_bank-kunnr     = ls_data-kunnr.        INSERT zbank1 FROM ls_bank.    IF sy-subrc = 0.         MESSAGE 'Record inserted successfully' TYPE 'S'.       ELSE.         MESSAGE 'Failed to insert record' TYPE 'E'.       ENDIF.     ELSE.       MESSAGE 'Record already exists, skipped' TYPE 'I'.     ENDIF.    ENDLOOP.
+*&---------------------------------------------------------------------*
+*& Report ZEXCEL_FILEHANDLING
+*&---------------------------------------------------------------------*
+REPORT zexcel_filehandling.
+
+TYPES: BEGIN OF ty_data,
+         bank_id   TYPE zbank_id,
+         cust_id   TYPE zcust_id,
+         bank_name TYPE zbank_name,
+         bank_city TYPE zbank_city,
+         country   TYPE zcountry,
+         amount11  TYPE zamount11,
+         kunnr     TYPE kunnr,
+       END OF ty_data.
+
+DATA: lt_data TYPE TABLE OF ty_data,
+      ls_data TYPE ty_data.
+
+DATA: lt_bank TYPE TABLE OF zbank1,
+      ls_bank TYPE zbank1.
+
+DATA: lv_file TYPE string.
+
+PARAMETERS: p_file TYPE localfile.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  CALL FUNCTION 'F4_FILENAME'
+    EXPORTING
+      program_name  = syst-cprog
+      dynpro_number = syst-dynnr
+      field_name    = 'P_FILE'
+    IMPORTING
+      file_name     = p_file.
+
+START-OF-SELECTION.
+
+  lv_file = p_file.
+
+  "--------------------------------------------------------------
+  " Step 1: Upload raw XLSX as binary, convert to XSTRING
+  "--------------------------------------------------------------
+  DATA: lv_xdata   TYPE xstring,
+        lv_filelen TYPE i,
+        lt_raw     TYPE STANDARD TABLE OF solix.
+
+  CALL FUNCTION 'GUI_UPLOAD'
+    EXPORTING
+      filename   = lv_file
+      filetype   = 'BIN'
+    IMPORTING
+      filelength = lv_filelen
+    TABLES
+      data_tab   = lt_raw.
+
+  IF sy-subrc <> 0.
+    MESSAGE |Binary upload failed. sy-subrc = { sy-subrc }| TYPE 'E'.
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+    EXPORTING
+      input_length = lv_filelen
+    IMPORTING
+      buffer       = lv_xdata
+    TABLES
+      binary_tab   = lt_raw.
+
+  "--------------------------------------------------------------
+  " Step 2: Parse XLSX using CL_FDT_XL_SPREADSHEET
+  "--------------------------------------------------------------
+  DATA: lo_excel    TYPE REF TO cl_fdt_xl_spreadsheet,
+        lt_sheets   TYPE if_fdt_doc_spreadsheet=>t_worksheet_names,
+        lv_sheet    TYPE string,
+        lo_data_ref TYPE REF TO data,
+        lo_ex       TYPE REF TO cx_fdt.
+
+  FIELD-SYMBOLS: <lt_dyn_tab> TYPE STANDARD TABLE,
+                 <ls_dyn_row> TYPE any,
+                 <lv_cell>    TYPE any.
+
+  TRY.
+      lo_excel = NEW cl_fdt_xl_spreadsheet(
+                       document_name = lv_file
+                       xdocument     = lv_xdata ).
+
+      lo_excel->if_fdt_doc_spreadsheet~get_worksheet_names(
+        IMPORTING
+          worksheet_names = lt_sheets ).
+
+      IF lt_sheets IS INITIAL.
+        MESSAGE 'No worksheets found in file' TYPE 'E'.
+        RETURN.
+      ENDIF.
+
+      READ TABLE lt_sheets INTO lv_sheet INDEX 1.   " first sheet
+
+      lo_data_ref = lo_excel->if_fdt_doc_spreadsheet~get_itab_from_worksheet( lv_sheet ).
+      ASSIGN lo_data_ref->* TO <lt_dyn_tab>.
+
+    CATCH cx_fdt INTO lo_ex.
+      MESSAGE lo_ex->get_text( ) TYPE 'E'.
+      RETURN.
+  ENDTRY.
+
+  IF <lt_dyn_tab> IS NOT ASSIGNED.
+    MESSAGE 'Could not read worksheet data' TYPE 'E'.
+    RETURN.
+  ENDIF.
+
+  "--------------------------------------------------------------
+  " Step 3: Map dynamic rows -> your typed structure (by column position)
+  " Row 1 is normally the header row from Excel - skipped below
+  "--------------------------------------------------------------
+  DATA: lv_idx TYPE i.
+
+  "--------------------------------------------------------------
+  " Step 4: Existing DB logic - unchanged
+  "--------------------------------------------------------------
+  IF lt_data IS NOT INITIAL.
+    SELECT * FROM zbank1
+      INTO TABLE lt_bank
+      FOR ALL ENTRIES IN lt_data
+      WHERE zbank_id = lt_data-bank_id
+        AND zcust_id = lt_data-cust_id.
+  ENDIF.
+
+  LOOP AT lt_data INTO ls_data.
+
+    READ TABLE lt_bank INTO ls_bank
+         WITH KEY zbank_id = ls_data-bank_id
+                  zcust_id = ls_data-cust_id.
+
+    IF sy-subrc <> 0.
+      CLEAR ls_bank.
+      ls_bank-zbank_id   = ls_data-bank_id.
+      ls_bank-zcust_id   = ls_data-cust_id.
+      ls_bank-zbank_name = ls_data-bank_name.
+      ls_bank-zbank_city = ls_data-bank_city.
+      ls_bank-zcountry   = ls_data-country.
+      ls_bank-zamount11  = ls_data-amount11.
+      ls_bank-kunnr      = ls_data-kunnr.
+
+      INSERT zbank1 FROM ls_bank.
+
+      IF sy-subrc = 0.
+        MESSAGE 'Record inserted successfully' TYPE 'S'.
+      ELSE.
+        MESSAGE 'Failed to insert record' TYPE 'E'.
+      ENDIF.
+    ELSE.
+      MESSAGE 'Record already exists, skipped' TYPE 'I'.
+    ENDIF.
+
+  ENDLOOP.
